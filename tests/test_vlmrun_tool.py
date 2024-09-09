@@ -1,50 +1,50 @@
-import unittest
+import pytest
 from unittest.mock import patch, MagicMock
 from crewai_tools.tools.vlmrun_tool import VLMRunTool
+from requests.exceptions import RequestException
 
-class TestVLMRunTool(unittest.TestCase):
-    def setUp(self):
-        self.tool = VLMRunTool()
+@pytest.fixture
+def vlm_run_tool():
+    return VLMRunTool()
 
-    @patch('crewai_tools.tools.vlmrun_tool.requests.post')
-    def test_image_generation(self, mock_post):
-        # Mock successful API response for image generation
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"image_url": "https://example.com/image.jpg"}
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+@pytest.mark.parametrize("generation_type, expected_url, expected_result", [
+    ("image", "https://api.vlm.run/v1/image/generate", "Image generated successfully"),
+    ("document", "https://api.vlm.run/v1/document/generate", "Document generated successfully"),
+])
+@patch('crewai_tools.tools.vlmrun_tool.requests.post')
+def test_generation(mock_post, vlm_run_tool, generation_type, expected_url, expected_result):
+    # Mock successful API response
+    mock_response = MagicMock()
+    mock_response.json.return_value = (
+        {"image_url": "https://example.com/image.jpg"} if generation_type == "image"
+        else {"content": "Generated document content"}
+    )
+    mock_response.raise_for_status.return_value = None
+    mock_post.return_value = mock_response
 
-        result = self.tool._run(prompt="A beautiful sunset", generation_type="image")
-        self.assertIn("Image generated successfully", result)
-        self.assertIn("https://example.com/image.jpg", result)
+    result = vlm_run_tool._run(prompt=f"Test {generation_type} prompt", generation_type=generation_type)
 
-    @patch('crewai_tools.tools.vlmrun_tool.requests.post')
-    def test_document_generation(self, mock_post):
-        # Mock successful API response for document generation
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"content": "Generated document content"}
-        mock_response.raise_for_status.return_value = None
-        mock_post.return_value = mock_response
+    assert expected_result in result
+    assert mock_post.call_args[0][0] == expected_url
+    if generation_type == "image":
+        assert "https://example.com/image.jpg" in result
+    else:
+        assert "Generated document content" in result
 
-        result = self.tool._run(prompt="Write a short story", generation_type="document")
-        self.assertIn("Document generated successfully", result)
-        self.assertIn("Generated document content", result)
+def test_invalid_generation_type(vlm_run_tool):
+    result = vlm_run_tool._run(prompt="Test prompt", generation_type="invalid")
+    assert result == "Invalid generation_type. Must be 'image' or 'document'."
 
-    def test_invalid_generation_type(self):
-        result = self.tool._run(prompt="Test prompt", generation_type="invalid")
-        self.assertEqual(result, "Invalid generation_type. Must be 'image' or 'document'.")
+def test_missing_parameters(vlm_run_tool):
+    result = vlm_run_tool._run(prompt="Test prompt")
+    assert result == "Both prompt and generation_type are required."
 
-    def test_missing_parameters(self):
-        result = self.tool._run(prompt="Test prompt")
-        self.assertEqual(result, "Both prompt and generation_type are required.")
+@patch('crewai_tools.tools.vlmrun_tool.requests.post')
+def test_api_error(mock_post, vlm_run_tool):
+    # Mock API error
+    mock_post.side_effect = RequestException("API Error")
 
-    @patch('crewai_tools.tools.vlmrun_tool.requests.post')
-    def test_api_error(self, mock_post):
-        # Mock API error
-        mock_post.side_effect = Exception("API Error")
+    result = vlm_run_tool._run(prompt="Test prompt", generation_type="image")
 
-        result = self.tool._run(prompt="Test prompt", generation_type="image")
-        self.assertIn("Error occurred while calling VLM Run API", result)
-
-if __name__ == '__main__':
-    unittest.main()
+    assert "Error occurred while calling VLM Run API" in result
+    assert "API Error" in result
